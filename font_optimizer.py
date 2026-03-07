@@ -60,8 +60,8 @@ class FontOptimizer:
         self.first_char: str = ' '
         self.char_count: int = 10
         self.target_height: int = 16
-        self.remove_top: bool = False
-        self.remove_bottom: bool = False
+        self.remove_top: bool = True   # default True: matches original C# checkbox default
+        self.remove_bottom: bool = True
 
         # Output (populated by optimize())
         self.font_to_use: ImageFont.FreeTypeFont = self._load_font(16)
@@ -80,25 +80,57 @@ class FontOptimizer:
 
     def _get_string_bitmap(self, pil_font: ImageFont.FreeTypeFont,
                            text: str) -> Image.Image:
-        """Render *text* as red-on-black; mirrors GDI+ GetStringBitmap."""
+        """Render *text* red-on-black using 1-bit (no anti-aliasing).
+
+        Uses Pillow's getmask(mode='1') which maps to FreeType's
+        FT_RENDER_MODE_MONO — the same pixel-grid-fitted, non-antialiased
+        rendering as GDI+ TextRenderingHint.SingleBitPerPixelGridFit.
+
+        The resulting canvas has the same dimensions and coordinate system
+        as the old draw.text() approach so all scanline/width logic is
+        unchanged: textbbox supplies the canvas size and top/left offsets;
+        the 1-bit mask is pasted at those offsets, preserving the natural
+        blank rows above/below the ink that remove_top/bottom rely on.
+        """
         dummy = Image.new('RGB', (1, 1))
         draw = ImageDraw.Draw(dummy)
         try:
             bbox = draw.textbbox((0, 0), text, font=pil_font)
         except AttributeError:
-            # Pillow < 8.0 fallback
-            w, h = draw.textsize(text, font=pil_font)
-            bbox = (0, 0, w, h)
+            # Pillow < 8.0 fallback — derive bbox from textsize
+            tw, th = draw.textsize(text, font=pil_font)
+            bbox = (0, 0, tw, th)
 
-        # Handle negative left bearing (e.g. italic glyphs)
+        # x_off: extra left padding for fonts with negative left bearing (italic)
         x_off = max(0, -bbox[0])
+        # top_off: blank rows above ink (natural font leading / ascender space)
+        top_off = max(0, bbox[1])
+
+        # Canvas dimensions match the draw.text() approach exactly
         w = max(bbox[2] + x_off + 2, 2)
         h = max(bbox[3] + 2, 2)
 
-        img = Image.new('RGB', (w, h), (0, 0, 0))
-        draw = ImageDraw.Draw(img)
-        draw.text((x_off, 0), text, font=pil_font, fill=(255, 0, 0))
-        return img
+        try:
+            # 1-bit mask: FT_RENDER_MODE_MONO, tight bounding box of ink
+            mask = pil_font.getmask(text, mode='1')
+            mw, mh = mask.size
+
+            # Canvas may need to be larger if mask exceeds textbbox estimate
+            w = max(w, x_off + mw + 2)
+            h = max(h, top_off + mh + 2)
+
+            red = Image.new('L', (w, h), 0)
+            # Paste ink (255) at the same position draw.text() would place it
+            red.im.paste(255, (x_off, top_off, x_off + mw, top_off + mh), mask)
+            zeros = Image.new('L', (w, h), 0)
+            return Image.merge('RGB', (red, zeros, zeros))
+
+        except Exception:
+            # Fallback: anti-aliased draw.text() for fonts that reject mode='1'
+            img = Image.new('RGB', (w, h), (0, 0, 0))
+            draw2 = ImageDraw.Draw(img)
+            draw2.text((x_off, 0), text, font=pil_font, fill=(255, 0, 0))
+            return img
 
     def _get_minimum_height_rect(self, img: Image.Image) -> tuple:
         """Return (scanline_start, scanline_end) of rendered content rows."""

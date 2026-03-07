@@ -233,8 +233,8 @@ class FontCreatorApp(tk.Tk):
 
         cbr = ttk.Frame(of)
         cbr.pack(fill='x', pady=(0, 4))
-        self._remove_top_var = tk.BooleanVar(value=False)
-        self._remove_bottom_var = tk.BooleanVar(value=False)
+        self._remove_top_var = tk.BooleanVar(value=True)
+        self._remove_bottom_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(cbr, text='Remove Top blank rows',
                         variable=self._remove_top_var).pack(side='left', padx=(0, 12))
         ttk.Checkbutton(cbr, text='Remove Bottom blank rows',

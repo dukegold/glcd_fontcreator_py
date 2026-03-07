@@ -108,10 +108,13 @@ fo._font_size     # float, the converged PIL font size
    - deficit < -4 → `+2.0`
 5. After convergence, scan every character individually to build `minimum_rect`
 
-**Rendering** — `_get_string_bitmap(pil_font, text)`:
-- Draws red text (`fill=(255,0,0)`) on a black background
-- Uses `textbbox` to size the canvas; handles negative left bearings (italic fonts)
-- Equivalent to GDI+'s `SingleBitPerPixelGridFit` + red-on-black approach
+**`_get_string_bitmap(pil_font, text)`**:
+- Calls `draw.textbbox((0,0), text, font)` to get the ink bounding box: `(left, top, right, bottom)`
+- Computes canvas size: `w = bbox[2] + x_off + 2`, `h = bbox[3] + 2` (same formula as before)
+- Calls `pil_font.getmask(text, mode='1')` to get a tight 1-bit FreeType bitmap of size `(right-left, bottom-top)`
+- Pastes it at `(x_off, top_off)` in the canvas, where `x_off = max(0, -bbox[0])` (left-bearing) and `top_off = max(0, bbox[1])` (blank rows above ink = natural font leading)
+- Result: canvas identical in size/coordinates to the old `draw.text()` approach, but pixels are strictly 0 or 255 — no antialiasing artifacts that would undercount character widths
+- Falls back to antialiased `draw.text()` on exception (some unusual fonts reject `mode='1'`)
 
 **Threshold** — `BLANKTX = 20`:
 - A pixel is "blank" if its red channel < 20
@@ -309,7 +312,7 @@ self._photo_img           # ImageTk.PhotoImage ref (must be kept to prevent GC)
 
 | Area | Original | Python port |
 |------|-----------|-------------|
-| Font rendering | GDI+ `SingleBitPerPixelGridFit` | Pillow `draw.text()` (slight antialiasing; same R>20 threshold handles it) |
+| Font rendering | GDI+ `SingleBitPerPixelGridFit` | Pillow `getmask(mode='1')` → FreeType `FT_RENDER_MODE_MONO` (1-bit, no antialiasing). Pasted onto a canvas with `textbbox` coordinates so scanline logic is unchanged. Falls back to `draw.text()` for fonts that reject mode='1'. |
 | Bold / Italic synthesis | GDI can synthesize bold/italic from a regular font | Pillow cannot; user must select the bold/italic TTF file directly |
 | Font picker | Custom WinForms dialog with style checkboxes | Searchable listbox; style is determined by the file chosen |
 | `bold`/`italic` flags | Read from `Font.Bold` / `Font.Italic` | Set manually on `FontOptimizer`; currently always `False` unless explicitly set |
